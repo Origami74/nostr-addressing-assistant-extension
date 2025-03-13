@@ -43,6 +43,9 @@ export const NostrAddressingInfo: React.FC<NostrAddressingInfoProps> = ({ state 
 
   // Determine status coloring
   const getStatusColor = () => {
+    if (!isValidPubkey) {
+      return '#6b7280'; // gray when no valid pubkey found
+    }
     if (nip37DomainMismatch) {
       return noNip37EventFound ? '#f59e0b' : '#ef4444'; // amber for unverified, red for revoked
     }
@@ -50,6 +53,9 @@ export const NostrAddressingInfo: React.FC<NostrAddressingInfoProps> = ({ state 
   };
 
   const getStatusText = () => {
+    if (!isValidPubkey) {
+      return 'UNAVAILABLE';
+    }
     if (nip37DomainMismatch) {
       return noNip37EventFound ? 'UNVERIFIED' : 'REVOKED';
     }
@@ -57,6 +63,9 @@ export const NostrAddressingInfo: React.FC<NostrAddressingInfoProps> = ({ state 
   };
 
   const getStatusIcon = () => {
+    if (!isValidPubkey) {
+      return 'ⓘ';
+    }
     if (nip37DomainMismatch) {
       return noNip37EventFound ? 'ⓘ' : '⚠️';
     }
