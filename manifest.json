@@ -15,6 +15,13 @@
     "service_worker": "dist/background.js",
     "type": "module"
   },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["dist/contentScript.js"],
+      "run_at": "document_idle"
+    }
+  ],
   "icons": {
     "48": "dist/logo-kygw735p.svg",
     "128": "dist/logo-kygw735p.svg"

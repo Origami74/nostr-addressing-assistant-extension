@@ -8,6 +8,7 @@ const domainsWithWarnings = new Set<string>();
 
 // Listen for messages from the content script or popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Handle domain mismatch notifications from the popup
   if (message.action === 'domainMismatch') {
     const { domain } = message;
     
@@ -29,6 +30,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     
     sendResponse({ success: true });
+    return true;
+  }
+  
+  // Handle domain check requests from the content script
+  if (message.action === 'checkDomain') {
+    // For now, we'll just log the data and return success
+    // The full implementation would check NIP-37 events
+    console.log('Received domain check from content script:', message.data);
+    
+    // Send a simple response
+    sendResponse({ success: true, message: 'Domain check received' });
     return true;
   }
   

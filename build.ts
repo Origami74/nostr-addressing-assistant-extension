@@ -139,12 +139,14 @@ const htmlEntrypoints = [...new Bun.Glob("**.html").scanSync("src")]
   .map(a => path.resolve("src", a))
   .filter(dir => !dir.includes("node_modules"));
 
-// Add background script as an entrypoint
+// Add background script and content script as entrypoints
 const backgroundScript = path.resolve("src", "background.ts");
-const entrypoints = [...htmlEntrypoints, backgroundScript];
+const contentScript = path.resolve("src", "contentScript.ts");
+const entrypoints = [...htmlEntrypoints, backgroundScript, contentScript];
 
 console.log(`📄 Found ${htmlEntrypoints.length} HTML ${htmlEntrypoints.length === 1 ? "file" : "files"} to process`);
-console.log(`📄 Added background script: ${backgroundScript}\n`);
+console.log(`📄 Added background script: ${backgroundScript}`);
+console.log(`📄 Added content script: ${contentScript}\n`);
 
 // Build all the HTML files
 const result = await build({

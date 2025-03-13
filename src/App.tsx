@@ -117,6 +117,13 @@ async function fetchLatestNip37Event(pubkey: string, relays: string[]): Promise<
     if (msg[0] === 'EOSE') break;
   }
 
+  // Handle empty events array
+  if (events.length === 0) {
+    console.log('No NIP-37 events found for pubkey:', pubkey);
+    return undefined;
+  }
+
+  // With at least one event, we can safely use reduce
   const latestEvent = events.reduce((prev, next) => {
     console.log('prev', prev);
     console.log('next', next);
@@ -126,7 +133,7 @@ async function fetchLatestNip37Event(pubkey: string, relays: string[]): Promise<
     }
 
     return prev;
-  })
+  });
 
   return latestEvent;
 }
@@ -142,6 +149,7 @@ export function App() {
   const [isNewDomain, setIsNewDomain] = useState<boolean>(false);
   const [relaysUpdated, setRelaysUpdated] = useState<boolean>(false);
   const [nip37DomainMismatch, setNip37DomainMismatch] = useState<boolean>(false);
+  const [noNip37EventFound, setNoNip37EventFound] = useState<boolean>(false);
   const [nip37Domains, setNip37Domains] = useState<Array<{domain: string, protocol: string}>>([]);
 
   useEffect(() => {
@@ -209,10 +217,12 @@ export function App() {
                   const addressingEvent = await fetchLatestNip37Event(previousInfo.pubkey, parsedRelays);
                   console.log('latest:', addressingEvent);
                   
-                  // Check if the latest NIP-37 event contains the current domain
+                  // Check if we were able to retrieve a NIP-37 event
                   if (addressingEvent) {
                     // NIP-37 events use "clearnet" tags with domain in position [1] and protocol in position [2]
-                    const clearnetTags = addressingEvent.tags.filter(tag => !!tag[1] && !!tag[2]);
+                    const clearnetTags = addressingEvent.tags.filter(tag => 
+                      tag[0] === 'clearnet' && !!tag[1] && !!tag[2]
+                    );
                     
                     // Get protocol from current URL (without the ":" part)
                     const protocol = url.protocol.replace(':', '');
@@ -239,13 +249,12 @@ export function App() {
                     
                     // Update extension icon to show warning if domain not found
                     if (!domainFound) {
-                      // Set a warning badge on the extension icon - use "!" instead of emoji for compatibility
+                      // Set a warning badge on the extension icon
                       chrome.action.setBadgeText({ text: '!' });
                       chrome.action.setBadgeBackgroundColor({ color: '#ef4444' });
                       
-                      // Change the icon to a warning version if available
+                      // Send a message to the background script
                       try {
-                        // Send a message to the background script to handle opening the popup
                         chrome.runtime.sendMessage({ 
                           action: 'domainMismatch',
                           domain: currentDomain
@@ -256,6 +265,25 @@ export function App() {
                     } else {
                       // Clear any existing badge
                       chrome.action.setBadgeText({ text: '' });
+                    }
+                  } else {
+                    // No NIP-37 event found for this pubkey
+                    console.log('No NIP-37 event found for pubkey:', previousInfo.pubkey);
+                    setNip37DomainMismatch(true);
+                    setNoNip37EventFound(true);
+                    
+                    // Set warning badge
+                    chrome.action.setBadgeText({ text: '!' });
+                    chrome.action.setBadgeBackgroundColor({ color: '#ef4444' });
+                    
+                    // Try to send a message to the background script
+                    try {
+                      chrome.runtime.sendMessage({ 
+                        action: 'domainMismatch',
+                        domain: currentDomain
+                      });
+                    } catch (error) {
+                      console.error('Failed to send message to background script:', error);
                     }
                   }
                 }
@@ -290,32 +318,69 @@ export function App() {
           textAlign: 'center',
           position: 'relative',
         }}>
-          <div style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            width: '100%',
-            textAlign: 'center',
-            backgroundColor: 'rgba(239, 68, 68, 0.8)',
-            color: 'white',
-            fontWeight: 'bold',
-            padding: '0.25rem',
-            borderTopLeftRadius: '0.5rem',
-            borderTopRightRadius: '0.5rem',
-            fontSize: '0.75rem'
-          }}>
-            DOMAIN RUGGED
-          </div>
-          <img 
-            src={rugpullImage} 
-            alt="Error: Domain revoked" 
-            style={{ 
-              maxWidth: '100%', 
+          {/* For revoked domains, show the cartoon with red header */}
+          {!noNip37EventFound ? (
+            <>
+              <div style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                textAlign: 'center',
+                backgroundColor: 'rgba(239, 68, 68, 0.9)', // Red for revoked
+                color: 'white',
+                fontWeight: '600',
+                padding: '0.375rem 0',
+                borderTopLeftRadius: '0.5rem',
+                borderTopRightRadius: '0.5rem',
+                fontSize: '0.75rem',
+                zIndex: 10
+              }}>
+                DOMAIN RUGGED
+              </div>
+              <img 
+                src={rugpullImage} 
+                alt="Error: Domain revoked" 
+                style={{ 
+                  maxWidth: '100%', 
+                  borderRadius: '0.5rem',
+                  border: '2px solid #ef4444',
+                  marginTop: '1.25rem'
+                }} 
+              />
+            </>
+          ) : (
+            /* For unverified domains, show a cleaner banner-style message */
+            <div style={{
+              width: '100%',
               borderRadius: '0.5rem',
-              border: '2px solid #ef4444',
-              marginTop: '1.25rem' // Make room for the label
-            }} 
-          />
+              border: '2px solid #f59e0b',
+              backgroundColor: '#fff7ed',
+              overflow: 'hidden',
+              boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)'
+            }}>
+              <div style={{
+                backgroundColor: '#f59e0b',
+                color: 'white',
+                fontWeight: '600',
+                padding: '0.375rem 0',
+                textAlign: 'center',
+                fontSize: '0.75rem'
+              }}>
+                DOMAIN UNVERIFIED
+              </div>
+              <div style={{
+                padding: '0.75rem',
+                color: '#92400e',
+                fontSize: '0.75rem',
+                fontWeight: 500,
+                textAlign: 'center',
+                lineHeight: '1.5'
+              }}>
+                This domain has a valid Nostr pubkey but the owner has not published a NIP-37 verification record yet.
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -337,17 +402,19 @@ export function App() {
           <div style={{ marginTop: '0.5rem' }}>
             <p style={{ fontSize: '0.75rem', fontWeight: 500 }}>Domains associated with this pubkey:</p>
             <ul style={{ fontSize: '0.75rem', marginTop: '0.25rem', paddingLeft: '1rem' }}>
-              {/* Show current domain at top in red if it's not in the NIP-37 event */}
+              {/* Show current domain at top with appropriate warning styling */}
               {nip37DomainMismatch && (
                 <li style={{ 
                   marginBottom: '0.25rem', 
                   wordBreak: 'break-all',
-                  color: '#ef4444',
+                  color: noNip37EventFound ? '#b45309' : '#ef4444', // Amber text for unverified, red for revoked
                   fontWeight: 600,
-                  borderBottom: '1px solid #fca5a5',
+                  borderBottom: noNip37EventFound 
+                    ? '1px solid #fcd34d' // Amber border for unverified
+                    : '1px solid #fca5a5', // Red border for revoked
                   paddingBottom: '0.25rem',
                 }}>
-                  {domain} - REVOKED ⚠️
+                  {domain} - {noNip37EventFound ? 'UNVERIFIED' : 'REVOKED'} {noNip37EventFound ? 'ⓘ' : '⚠️'}
                 </li>
               )}
               
@@ -433,16 +500,39 @@ export function App() {
             )}
             
             {nip37DomainMismatch && (
-              <div style={{ marginTop: '0.5rem', padding: '0.5rem', backgroundColor: '#fef3c7', borderRadius: '0.25rem', border: '1px solid #f59e0b' }}>
-                <p style={{ fontSize: '0.75rem', color: '#b45309', fontWeight: 500 }}>
-                  ⚠️ Warning: Domain not verified in NIP-37 record!
+              <div style={{ 
+                marginTop: '0.5rem', 
+                padding: '0.5rem', 
+                backgroundColor: noNip37EventFound ? '#fffbeb' : '#fef3c7', // Lighter amber for unverified
+                borderRadius: '0.25rem', 
+                border: noNip37EventFound ? '1px solid #d97706' : '1px solid #f59e0b' // Different border color
+              }}>
+                <p style={{ 
+                  fontSize: '0.75rem', 
+                  color: noNip37EventFound ? '#92400e' : '#b45309', 
+                  fontWeight: 500 
+                }}>
+                  {noNip37EventFound ? 'ⓘ Note:' : '⚠️ Warning:'} {noNip37EventFound ? 'No NIP-37 record found' : 'Domain not verified in NIP-37 record!'}
                 </p>
-                <p style={{ fontSize: '0.75rem', color: '#92400e' }}>
-                  The current domain ({domain}) with its protocol is not listed in the latest NIP-37 (kind 11111) event for this pubkey.
-                </p>
-                <p style={{ fontSize: '0.75rem', color: '#92400e', marginTop: '0.25rem' }}>
-                  This could indicate site impersonation or that the pubkey owner has not updated their NIP-37 addressing record.
-                </p>
+                {noNip37EventFound ? (
+                  <>
+                    <p style={{ fontSize: '0.75rem', color: '#92400e' }}>
+                      No NIP-37 (kind 11111) event was found for this pubkey.
+                    </p>
+                    <p style={{ fontSize: '0.75rem', color: '#92400e', marginTop: '0.25rem' }}>
+                      The owner of this pubkey should publish a domain verification record for added security.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p style={{ fontSize: '0.75rem', color: '#92400e' }}>
+                      The current domain ({domain}) with its protocol is not listed in the latest NIP-37 (kind 11111) event for this pubkey.
+                    </p>
+                    <p style={{ fontSize: '0.75rem', color: '#92400e', marginTop: '0.25rem' }}>
+                      This could indicate site impersonation or that the pubkey owner has not updated their NIP-37 addressing record.
+                    </p>
+                  </>
+                )}
               </div>
             )}
           </div>
