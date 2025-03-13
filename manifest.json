@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Nostr Addressing",
+  "version": "0.1.0",
+  "description": "A Chrome extension for NIP-37 (draft) Nostr Addressing",
+  "permissions": ["activeTab", "tabs", "scripting"],
+  "action": {
+    "default_popup": "dist/index.html"
+  },
+  "icons": {
+    "48": "dist/logo-kygw735p.svg",
+    "128": "dist/logo-kygw735p.svg"
+  }
+} 
