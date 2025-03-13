@@ -211,49 +211,88 @@ export function App() {
                       setRelaysUpdated(true);
                     }
                   }
-
-
-                  // request 11111 events from the new pubkey
-                  const addressingEvent = await fetchLatestNip37Event(previousInfo.pubkey, parsedRelays);
-                  console.log('latest:', addressingEvent);
+                
+                  // Check if we should use saved info when no valid meta tag is present
+                  const usingFallbackPubkey = !isValidPubkey && previousInfo !== null;
                   
-                  // Check if we were able to retrieve a NIP-37 event
-                  if (addressingEvent) {
-                    // NIP-37 events use "clearnet" tags with domain in position [1] and protocol in position [2]
-                    const clearnetTags = addressingEvent.tags.filter(tag => 
-                      tag[0] === 'clearnet' && !!tag[1] && !!tag[2]
-                    );
+                  if (usingFallbackPubkey) {
+                    console.log('Using saved pubkey because current meta tag is missing or invalid');
+                    setPubkey(previousInfo.pubkey + ' (saved)');
+                    setRelays(previousInfo.relays);
+                    setIsValidPubkey(true);
+                  }
+                  
+                  // Proceed with NIP-37 checks if we have a valid pubkey (either from meta tag or saved)
+                  if (isValidPubkey || usingFallbackPubkey) {
+                    // Determine which pubkey and relays to use
+                    const pubkeyToCheck = usingFallbackPubkey ? previousInfo.pubkey : 
+                                       (pubkeyMismatch ? previousInfo.pubkey : extractedPubkey);
+                    const relaysToUse = usingFallbackPubkey ? previousInfo.relays : parsedRelays;
                     
-                    // Get protocol from current URL (without the ":" part)
-                    const protocol = url.protocol.replace(':', '');
+                    // request 11111 events from the appropriate pubkey
+                    const addressingEvent = await fetchLatestNip37Event(pubkeyToCheck, relaysToUse);
+                    console.log('latest:', addressingEvent);
                     
-                    // Check if any tag matches both domain and protocol
-                    const domainFound = clearnetTags.some(tag => 
-                      tag[1] === currentDomain && 
-                      tag[2] === protocol
-                    );
-                    
-                    // Set mismatch state if domain+protocol not found in the event
-                    if (!domainFound) {
+                    // Check if we were able to retrieve a NIP-37 event
+                    if (addressingEvent) {
+                      // NIP-37 events use "clearnet" tags with domain in position [1] and protocol in position [2]
+                      const clearnetTags = addressingEvent.tags.filter(tag => 
+                        tag[0] === 'clearnet' && !!tag[1] && !!tag[2]
+                      );
+                      
+                      // Get protocol from current URL (without the ":" part)
+                      const protocol = url.protocol.replace(':', '');
+                      
+                      // Check if any tag matches both domain and protocol
+                      const domainFound = clearnetTags.some(tag => 
+                        tag[1] === currentDomain && 
+                        tag[2] === protocol
+                      );
+                      
+                      // Set mismatch state if domain+protocol not found in the event
+                      if (!domainFound) {
+                        setNip37DomainMismatch(true);
+                      }
+                      
+                      // Extract all domains from the clearnet tags
+                      const domains = clearnetTags.map(tag => ({
+                        domain: tag[1],
+                        protocol: tag[2]
+                      }));
+                      
+                      // Store all domains in state
+                      setNip37Domains(domains);
+                      
+                      // Update extension icon to show warning if domain not found
+                      if (!domainFound) {
+                        // Set a warning badge on the extension icon
+                        chrome.action.setBadgeText({ text: '!' });
+                        chrome.action.setBadgeBackgroundColor({ color: '#ef4444' });
+                        
+                        // Send a message to the background script
+                        try {
+                          chrome.runtime.sendMessage({ 
+                            action: 'domainMismatch',
+                            domain: currentDomain
+                          });
+                        } catch (error) {
+                          console.error('Failed to send message to background script:', error);
+                        }
+                      } else {
+                        // Clear any existing badge
+                        chrome.action.setBadgeText({ text: '' });
+                      }
+                    } else {
+                      // No NIP-37 event found for this pubkey
+                      console.log('No NIP-37 event found for pubkey:', pubkeyToCheck);
                       setNip37DomainMismatch(true);
-                    }
-                    
-                    // Extract all domains from the clearnet tags
-                    const domains = clearnetTags.map(tag => ({
-                      domain: tag[1],
-                      protocol: tag[2]
-                    }));
-                    
-                    // Store all domains in state
-                    setNip37Domains(domains);
-                    
-                    // Update extension icon to show warning if domain not found
-                    if (!domainFound) {
-                      // Set a warning badge on the extension icon
+                      setNoNip37EventFound(true);
+                      
+                      // Set warning badge
                       chrome.action.setBadgeText({ text: '!' });
                       chrome.action.setBadgeBackgroundColor({ color: '#ef4444' });
                       
-                      // Send a message to the background script
+                      // Try to send a message to the background script
                       try {
                         chrome.runtime.sendMessage({ 
                           action: 'domainMismatch',
@@ -262,28 +301,6 @@ export function App() {
                       } catch (error) {
                         console.error('Failed to send message to background script:', error);
                       }
-                    } else {
-                      // Clear any existing badge
-                      chrome.action.setBadgeText({ text: '' });
-                    }
-                  } else {
-                    // No NIP-37 event found for this pubkey
-                    console.log('No NIP-37 event found for pubkey:', previousInfo.pubkey);
-                    setNip37DomainMismatch(true);
-                    setNoNip37EventFound(true);
-                    
-                    // Set warning badge
-                    chrome.action.setBadgeText({ text: '!' });
-                    chrome.action.setBadgeBackgroundColor({ color: '#ef4444' });
-                    
-                    // Try to send a message to the background script
-                    try {
-                      chrome.runtime.sendMessage({ 
-                        action: 'domainMismatch',
-                        domain: currentDomain
-                      });
-                    } catch (error) {
-                      console.error('Failed to send message to background script:', error);
                     }
                   }
                 }
@@ -298,6 +315,88 @@ export function App() {
           } else {
             setPubkey('No Nostr pubkey found');
             setIsValidPubkey(false);
+          }
+          
+          // Check if we should use saved info when no valid meta tag is present
+          if (!isValidPubkey && previousInfo !== null) {
+            console.log('Using saved pubkey because current meta tag is missing or invalid');
+            setPubkey(previousInfo.pubkey + ' (saved)');
+            setRelays(previousInfo.relays);
+            setIsValidPubkey(true);
+            
+            // Continue with NIP-37 checks using the saved pubkey
+            const addressingEvent = await fetchLatestNip37Event(previousInfo.pubkey, previousInfo.relays);
+            console.log('latest using saved pubkey:', addressingEvent);
+            
+            // Process the NIP-37 check results for saved pubkey
+            if (addressingEvent) {
+              // NIP-37 events use "clearnet" tags with domain in position [1] and protocol in position [2]
+              const clearnetTags = addressingEvent.tags.filter(tag => 
+                tag[0] === 'clearnet' && !!tag[1] && !!tag[2]
+              );
+              
+              // Get protocol from current URL (without the ":" part)
+              const protocol = url.protocol.replace(':', '');
+              
+              // Check if any tag matches both domain and protocol
+              const domainFound = clearnetTags.some(tag => 
+                tag[1] === currentDomain && 
+                tag[2] === protocol
+              );
+              
+              // Set mismatch state if domain+protocol not found in the event
+              if (!domainFound) {
+                setNip37DomainMismatch(true);
+              }
+              
+              // Extract all domains from the clearnet tags
+              const domains = clearnetTags.map(tag => ({
+                domain: tag[1],
+                protocol: tag[2]
+              }));
+              
+              // Store all domains in state
+              setNip37Domains(domains);
+              
+              // Update extension icon to show warning if domain not found
+              if (!domainFound) {
+                // Set a warning badge on the extension icon
+                chrome.action.setBadgeText({ text: '!' });
+                chrome.action.setBadgeBackgroundColor({ color: '#ef4444' });
+                
+                // Send a message to the background script
+                try {
+                  chrome.runtime.sendMessage({ 
+                    action: 'domainMismatch',
+                    domain: currentDomain
+                  });
+                } catch (error) {
+                  console.error('Failed to send message to background script:', error);
+                }
+              } else {
+                // Clear any existing badge
+                chrome.action.setBadgeText({ text: '' });
+              }
+            } else {
+              // No NIP-37 event found for this pubkey
+              console.log('No NIP-37 event found for saved pubkey:', previousInfo.pubkey);
+              setNip37DomainMismatch(true);
+              setNoNip37EventFound(true);
+              
+              // Set warning badge
+              chrome.action.setBadgeText({ text: '!' });
+              chrome.action.setBadgeBackgroundColor({ color: '#ef4444' });
+              
+              // Try to send a message to the background script
+              try {
+                chrome.runtime.sendMessage({ 
+                  action: 'domainMismatch',
+                  domain: currentDomain
+                });
+              } catch (error) {
+                console.error('Failed to send message to background script:', error);
+              }
+            }
           }
         }).catch(error => {
           console.error('Error executing script:', error);
