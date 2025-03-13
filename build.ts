@@ -134,11 +134,17 @@ if (existsSync(outdir)) {
 
 const start = performance.now();
 
-// Scan for all HTML files in the project
-const entrypoints = [...new Bun.Glob("**.html").scanSync("src")]
+// Scan for all HTML files and background script in the project
+const htmlEntrypoints = [...new Bun.Glob("**.html").scanSync("src")]
   .map(a => path.resolve("src", a))
   .filter(dir => !dir.includes("node_modules"));
-console.log(`📄 Found ${entrypoints.length} HTML ${entrypoints.length === 1 ? "file" : "files"} to process\n`);
+
+// Add background script as an entrypoint
+const backgroundScript = path.resolve("src", "background.ts");
+const entrypoints = [...htmlEntrypoints, backgroundScript];
+
+console.log(`📄 Found ${htmlEntrypoints.length} HTML ${htmlEntrypoints.length === 1 ? "file" : "files"} to process`);
+console.log(`📄 Added background script: ${backgroundScript}\n`);
 
 // Build all the HTML files
 const result = await build({

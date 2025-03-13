@@ -212,7 +212,7 @@ export function App() {
                   // Check if the latest NIP-37 event contains the current domain
                   if (addressingEvent) {
                     // NIP-37 events use "clearnet" tags with domain in position [1] and protocol in position [2]
-                    const clearnetTags = addressingEvent.tags.filter(tag => tag[0] === 'clearnet');
+                    const clearnetTags = addressingEvent.tags.filter(tag => !!tag[1] && !!tag[2]);
                     
                     // Get protocol from current URL (without the ":" part)
                     const protocol = url.protocol.replace(':', '');
@@ -236,6 +236,27 @@ export function App() {
                     
                     // Store all domains in state
                     setNip37Domains(domains);
+                    
+                    // Update extension icon to show warning if domain not found
+                    if (!domainFound) {
+                      // Set a warning badge on the extension icon - use "!" instead of emoji for compatibility
+                      chrome.action.setBadgeText({ text: '!' });
+                      chrome.action.setBadgeBackgroundColor({ color: '#ef4444' });
+                      
+                      // Change the icon to a warning version if available
+                      try {
+                        // Send a message to the background script to handle opening the popup
+                        chrome.runtime.sendMessage({ 
+                          action: 'domainMismatch',
+                          domain: currentDomain
+                        });
+                      } catch (error) {
+                        console.error('Failed to send message to background script:', error);
+                      }
+                    } else {
+                      // Clear any existing badge
+                      chrome.action.setBadgeText({ text: '' });
+                    }
                   }
                 }
               } catch (error) {
@@ -260,13 +281,14 @@ export function App() {
   }, []);
 
   return (
+    
     <div style={{ width: '300px', padding: '1rem' }}>
       {/* Display warning image when domain mismatch is detected */}
       {nip37DomainMismatch && (
         <div style={{ 
           marginBottom: '1rem', 
           textAlign: 'center',
-          position: 'relative'
+          position: 'relative',
         }}>
           <div style={{
             position: 'absolute',
@@ -282,11 +304,11 @@ export function App() {
             borderTopRightRadius: '0.5rem',
             fontSize: '0.75rem'
           }}>
-            DOMAIN REVOKED WARNING
+            DOMAIN RUGGED
           </div>
           <img 
             src={rugpullImage} 
-            alt="Warning: Domain possibly revoked" 
+            alt="Error: Domain revoked" 
             style={{ 
               maxWidth: '100%', 
               borderRadius: '0.5rem',
@@ -296,18 +318,59 @@ export function App() {
           />
         </div>
       )}
+
       <div style={{ 
         padding: '1rem',
         borderRadius: '0.5rem',
         border: '1px solid #e5e7eb',
         background: 'white'
       }}>
+
+        
+
+        <h2 style={{ fontSize: '1.125rem', fontWeight: 600 }}>Nostr Addressing Assistant</h2>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <h2 style={{ fontSize: '1.125rem', fontWeight: 600 }}>Nostr Addressing</h2>
-          <div>
-            <p style={{ fontSize: '0.875rem', fontWeight: 500 }}>Domain:</p>
-            <p style={{ fontSize: '0.875rem', color: '#4b5563', wordBreak: 'break-all' }}>{domain}</p>
+        
+
+          {/* Display domains list if there are NIP-37 domains or if there's a mismatch */}
+          {(nip37Domains.length > 0 || nip37DomainMismatch) && (
+          <div style={{ marginTop: '0.5rem' }}>
+            <p style={{ fontSize: '0.75rem', fontWeight: 500 }}>Domains associated with this pubkey:</p>
+            <ul style={{ fontSize: '0.75rem', marginTop: '0.25rem', paddingLeft: '1rem' }}>
+              {/* Show current domain at top in red if it's not in the NIP-37 event */}
+              {nip37DomainMismatch && (
+                <li style={{ 
+                  marginBottom: '0.25rem', 
+                  wordBreak: 'break-all',
+                  color: '#ef4444',
+                  fontWeight: 600,
+                  borderBottom: '1px solid #fca5a5',
+                  paddingBottom: '0.25rem',
+                }}>
+                  {domain} - REVOKED ⚠️
+                </li>
+              )}
+              
+              {/* Show all domains from the NIP-37 event */}
+              {nip37Domains.map(({ domain: domainItem, protocol }, index) => (
+                <li key={index} style={{ 
+                  marginBottom: '0.125rem', 
+                  wordBreak: 'break-all',
+                  color: domainItem === domain ? '#10b981' : '#4b5563',
+                  fontWeight: domainItem === domain ? 600 : 400
+                }}>
+                  {domainItem} ({protocol})
+                  {domainItem === domain && (
+                    <span style={{ marginLeft: '0.25rem' }}>✓</span>
+                  )}
+                </li>
+              ))}
+            </ul>
           </div>
+        )}
+
+
+
           <div>
             <p style={{ fontSize: '0.875rem', fontWeight: 500 }}>Nostr Pubkey:</p>
             <p style={{ 
@@ -339,6 +402,8 @@ export function App() {
                 ✓ Relay information updated.
               </p>
             )}
+
+            
             {pubkeyMismatch && (
               <div style={{ marginTop: '0.5rem' }}>
                 <p style={{ fontSize: '0.75rem', color: '#f59e0b', fontWeight: 500 }}>
@@ -380,53 +445,7 @@ export function App() {
                 </p>
               </div>
             )}
-            
-            {/* Display domains list if there are NIP-37 domains or if there's a mismatch */}
-            {(nip37Domains.length > 0 || nip37DomainMismatch) && (
-              <div style={{ marginTop: '0.5rem' }}>
-                <p style={{ fontSize: '0.75rem', fontWeight: 500 }}>Domains associated with this pubkey:</p>
-                <ul style={{ fontSize: '0.75rem', marginTop: '0.25rem', paddingLeft: '1rem' }}>
-                  {/* Show current domain at top in red if it's not in the NIP-37 event */}
-                  {nip37DomainMismatch && (
-                    <li style={{ 
-                      marginBottom: '0.25rem', 
-                      wordBreak: 'break-all',
-                      color: '#ef4444',
-                      fontWeight: 600,
-                      borderBottom: '1px solid #fca5a5',
-                      paddingBottom: '0.25rem',
-                    }}>
-                      {domain} - POSSIBLY REVOKED ⚠️
-                    </li>
-                  )}
-                  
-                  {/* Show all domains from the NIP-37 event */}
-                  {nip37Domains.map(({ domain: domainItem, protocol }, index) => (
-                    <li key={index} style={{ 
-                      marginBottom: '0.125rem', 
-                      wordBreak: 'break-all',
-                      color: domainItem === domain ? '#10b981' : '#4b5563',
-                      fontWeight: domainItem === domain ? 600 : 400
-                    }}>
-                      {domainItem} ({protocol})
-                      {domainItem === domain && (
-                        <span style={{ marginLeft: '0.25rem' }}>✓</span>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
           </div>
-          <div 
-            style={{
-              width: '100%',
-              height: '6rem',
-              borderRadius: '0.5rem',
-              backgroundColor: color,
-              animation: 'pulse 2s infinite',
-            }}
-          />
         </div>
       </div>
     </div>
