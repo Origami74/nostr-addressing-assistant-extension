@@ -23,7 +23,9 @@ export const NostrAddressingInfo: React.FC<NostrAddressingInfoProps> = ({ state 
     relaysUpdated,
     nip37DomainMismatch,
     noNip37EventFound,
-    nip37Domains
+    nip37Domains,
+    extractedPubkey,
+    extractedRelays
   } = state;
 
   // Local state to track user decisions
@@ -46,6 +48,9 @@ export const NostrAddressingInfo: React.FC<NostrAddressingInfoProps> = ({ state 
     if (!isValidPubkey) {
       return '#6b7280'; // gray when no valid pubkey found
     }
+    if (pubkeyMismatch && !keptOldPubkey && !trustedNewPubkey) {
+      return '#ef4444'; // red for pubkey mismatch
+    }
     if (nip37DomainMismatch) {
       return noNip37EventFound ? '#f59e0b' : '#ef4444'; // amber for unverified, red for revoked
     }
@@ -55,6 +60,9 @@ export const NostrAddressingInfo: React.FC<NostrAddressingInfoProps> = ({ state 
   const getStatusText = () => {
     if (!isValidPubkey) {
       return 'UNAVAILABLE';
+    }
+    if (pubkeyMismatch && !keptOldPubkey && !trustedNewPubkey) {
+      return 'IMPERSONATED';
     }
     if (nip37DomainMismatch) {
       return noNip37EventFound ? 'UNVERIFIED' : 'REVOKED';
@@ -66,6 +74,9 @@ export const NostrAddressingInfo: React.FC<NostrAddressingInfoProps> = ({ state 
     if (!isValidPubkey) {
       return 'ⓘ';
     }
+    if (pubkeyMismatch && !keptOldPubkey && !trustedNewPubkey) {
+      return '⚠️';
+    }
     if (nip37DomainMismatch) {
       return noNip37EventFound ? 'ⓘ' : '⚠️';
     }
@@ -76,6 +87,7 @@ export const NostrAddressingInfo: React.FC<NostrAddressingInfoProps> = ({ state 
   const handleKeepOldPubkey = () => {
     if (savedInfo) {
       // Save the domain with the old pubkey that was previously trusted
+      console.log('handleKeepOldPubkey - keeping old pubkey:', savedInfo.pubkey);
       saveDomainInfo(domain, savedInfo.pubkey, savedInfo.relays);
       setKeptOldPubkey(true);
       setTrustedNewPubkey(false);
@@ -85,6 +97,7 @@ export const NostrAddressingInfo: React.FC<NostrAddressingInfoProps> = ({ state 
   // Handler for trusting the new pubkey
   const handleTrustNewPubkey = () => {
     // Save the domain with the new pubkey
+    console.log('handleTrustNewPubkey - trusting new pubkey:', pubkey);
     saveDomainInfo(domain, pubkey, relays);
     setTrustedNewPubkey(true);
     setKeptOldPubkey(false);
@@ -257,7 +270,12 @@ export const NostrAddressingInfo: React.FC<NostrAddressingInfoProps> = ({ state 
             {pubkeyMismatch && !keptOldPubkey && !trustedNewPubkey && (
               <>
                 <span style={{ fontSize: '0.9rem' }}>⚠️</span> 
-                <span>WARNING: Pubkey mismatch detected!</span>
+                <span>
+                  {/* Check if we have extractedPubkey - if so, it's a pubkey mismatch on same domain */}
+                  {extractedPubkey && savedInfo && savedInfo.pubkey !== extractedPubkey
+                    ? 'WARNING: Pubkey mismatch detected!'
+                    : 'WARNING: Pubkey impersonation detected!'}
+                </span>
               </>
             )}
             {nip37DomainMismatch && !pubkeyMismatch && (
@@ -268,9 +286,27 @@ export const NostrAddressingInfo: React.FC<NostrAddressingInfoProps> = ({ state 
           </div>
           
           {pubkeyMismatch && !keptOldPubkey && !trustedNewPubkey ? (
-            <div style={{ color: '#b91c1c' }}>
-              <p style={{ margin: '0 0 0.5rem 0', lineHeight: '1.3' }}>
-                <strong>Security risk:</strong> This domain previously had a different pubkey. This could indicate site impersonation or a legitimate key rotation.
+            <div style={{ 
+              color: '#b91c1c'
+            }}>
+              {/* Different messages based on the type of security issue */}
+              {extractedPubkey && savedInfo && savedInfo.pubkey !== extractedPubkey ? (
+                // Same domain, different pubkey = mismatch
+                <p style={{ margin: '0 0 0.5rem 0', lineHeight: '1.3' }}>
+                  <strong>SECURITY RISK:</strong> This site is trying to use a different pubkey than previously recorded. This likely indicates an impersonation attempt!
+                </p>
+              ) : (
+                // Different domain, using same pubkey = cross-domain impersonation
+                <p style={{ margin: '0 0 0.5rem 0', lineHeight: '1.3' }}>
+                  <strong>SECURITY RISK:</strong> This site is trying to use a pubkey that belongs to another domain. This is a likely impersonation attempt!
+                </p>
+              )}
+              
+              <p style={{ margin: '0 0 0.5rem 0', lineHeight: '1.3', fontSize: '0.65rem' }}>
+                Possible causes:
+                <br />• Site impersonation/phishing attempt
+                <br />• Man-in-the-middle attack
+                <br />• Legitimate key rotation (rare)
               </p>
               
               <div style={{ 
@@ -296,7 +332,10 @@ export const NostrAddressingInfo: React.FC<NostrAddressingInfoProps> = ({ state 
                     gap: '0.25rem'
                   }}
                 >
-                  <span>🔒</span> Keep using previously known pubkey
+                  <span>🔒</span> 
+                  {extractedPubkey && savedInfo && savedInfo.pubkey !== extractedPubkey
+                    ? 'Keep using previously known pubkey'
+                    : 'Reject impersonation attempt'}
                 </button>
                 
                 <button 
@@ -315,7 +354,10 @@ export const NostrAddressingInfo: React.FC<NostrAddressingInfoProps> = ({ state 
                     gap: '0.25rem'
                   }}
                 >
-                  <span>⚠️</span> Trust and update to new pubkey
+                  <span>⚠️</span> 
+                  {extractedPubkey && savedInfo && savedInfo.pubkey !== extractedPubkey
+                    ? 'Trust and update to new pubkey'
+                    : 'Allow this site to use pubkey'}
                 </button>
               </div>
             </div>
@@ -349,14 +391,22 @@ export const NostrAddressingInfo: React.FC<NostrAddressingInfoProps> = ({ state 
             <span>✓</span> 
             <span>
               {keptOldPubkey 
-                ? 'Using previously trusted pubkey' 
-                : 'Updated to the new pubkey'}
+                ? (extractedPubkey && savedInfo && savedInfo.pubkey !== extractedPubkey 
+                  ? 'Using previously trusted pubkey' 
+                  : 'Impersonation attempt rejected')
+                : (extractedPubkey && savedInfo && savedInfo.pubkey !== extractedPubkey
+                  ? 'Updated to the new pubkey'
+                  : 'Allowed this site to use pubkey')}
             </span>
           </div>
           <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.65rem' }}>
             {keptOldPubkey 
-              ? 'You chose to continue using the previously known pubkey for this domain.' 
-              : 'You chose to trust and update to the new pubkey for this domain.'}
+              ? (extractedPubkey && savedInfo && savedInfo.pubkey !== extractedPubkey
+                ? 'You chose to continue using the previously known pubkey for this domain.' 
+                : 'You chose to reject this impersonation attempt.')
+              : (extractedPubkey && savedInfo && savedInfo.pubkey !== extractedPubkey
+                ? 'You chose to trust and update to the new pubkey for this domain.'
+                : 'You chose to allow this site to use a pubkey from another domain.')}
           </p>
         </div>
       )}

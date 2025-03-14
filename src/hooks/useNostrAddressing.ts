@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { DomainInfo, Nip37Domain } from '../types/nostr';
 import { isValidHexPubkey, parseRelays } from '../utils/validation';
 import { generateColorFromDomain } from '../utils/ui';
-import { getSavedInfoForDomain, saveDomainInfo } from '../services/storage';
+import { getSavedInfoForDomain, saveDomainInfo, getDomainsForPubkey } from '../services/storage';
 import { fetchLatestNip37Event } from '../services/nostr';
 import type { NostrEvent } from '@nostrify/nostrify';
 
@@ -19,6 +19,8 @@ export interface NostrAddressingState {
   nip37DomainMismatch: boolean;
   noNip37EventFound: boolean;
   nip37Domains: Nip37Domain[];
+  extractedPubkey?: string;
+  extractedRelays?: string[];
 }
 
 /**
@@ -41,154 +43,386 @@ export function useNostrAddressing() {
   });
 
   useEffect(() => {
-    // Get the current tab's URL
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs[0]?.id && tabs[0]?.url) {
-        const url = new URL(tabs[0].url);
-        const currentDomain = url.hostname;
-        
-        // Update initial state
-        setState(prevState => ({
-          ...prevState,
-          domain: currentDomain,
-          color: generateColorFromDomain(currentDomain)
-        }));
-        
-        // Check if we have saved info for this domain
-        const previousInfo = getSavedInfoForDomain(currentDomain);
-        
-        // Update state with saved info
-        setState(prevState => ({
-          ...prevState,
-          savedInfo: previousInfo
-        }));
-        
-        // Execute script to extract the nostr-pubkey meta tag and relay information
-        chrome.scripting.executeScript({
-          target: { tabId: tabs[0].id },
-          func: () => {
-            const metaTag = document.querySelector('meta[name="nostr-pubkey"]');
-            if (!metaTag) return null;
-            
-            // Extract pubkey and relays
-            const pubkey = metaTag.getAttribute('content');
-            const relays = metaTag.getAttribute('relays') || metaTag.getAttribute('rel');
-            
-            return { pubkey, relays };
-          }
-        }).then(async results => {
-          if (results && results[0].result) {
-            const { pubkey: extractedPubkey, relays: extractedRelays } = results[0].result;
-            
-            if (extractedPubkey) {
-              // Update state with extracted info
-              setState(prevState => ({
-                ...prevState,
-                pubkey: extractedPubkey
-              }));
-              
-              try {
-                // Check if it's a valid hex pubkey
-                const isValid = isValidHexPubkey(extractedPubkey);
-                
-                // Parse relays
-                const parsedRelays = parseRelays(extractedRelays);
-                
-                // Update state with validation results
-                setState(prevState => ({
-                  ...prevState,
-                  isValidPubkey: isValid,
-                  relays: parsedRelays
-                }));
-                
-                // Process pubkey and domain info
-                if (isValid) {
-                  await processValidPubkey(
-                    currentDomain,
-                    extractedPubkey,
-                    parsedRelays,
-                    previousInfo,
-                    url.protocol.replace(':', '')
-                  );
-                }
-              } catch (error) {
-                console.error('Error validating pubkey:', error);
-                setState(prevState => ({
-                  ...prevState,
-                  isValidPubkey: false
-                }));
-              }
-            } else {
-              setState(prevState => ({
-                ...prevState,
-                pubkey: 'No Nostr pubkey found',
-                isValidPubkey: false
-              }));
-            }
-          } else {
-            setState(prevState => ({
-              ...prevState,
-              pubkey: 'No Nostr pubkey found',
-              isValidPubkey: false
-            }));
-          }
-          
-          // Check if we should use saved info when no valid meta tag is present
-          if (!state.isValidPubkey && previousInfo !== null) {
-            await fallbackToSavedPubkey(currentDomain, previousInfo, url.protocol.replace(':', ''));
-          }
-        }).catch(error => {
-          console.error('Error executing script:', error);
-          setState(prevState => ({
-            ...prevState,
-            pubkey: 'Error accessing page content',
-            isValidPubkey: false
-          }));
-        });
-      }
-    });
+    initializeNostrAddressing();
   }, []);
 
   /**
-   * Processes a valid pubkey and checks for NIP-37 events
+   * Initializes the Nostr addressing process by fetching the current tab URL
+   * and checking for saved domain information
    */
-  const processValidPubkey = async (
-    currentDomain: string,
-    extractedPubkey: string,
-    parsedRelays: string[],
+  const initializeNostrAddressing = () => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (!tabs[0]?.id || !tabs[0]?.url) return;
+
+      const url = new URL(tabs[0].url);
+      const currentDomain = url.hostname;
+      const protocol = url.protocol.replace(':', '');
+      
+      // Update initial state with domain info
+      updateStateWithDomain(currentDomain);
+      
+      // Check for saved information for this domain
+      const previousInfo = getSavedInfoForDomain(currentDomain);
+      updateStateWithSavedInfo(previousInfo);
+      
+      // Extract nostr-pubkey meta tag
+      extractPubkeyFromPage(tabs[0].id, currentDomain, previousInfo, protocol);
+    });
+  };
+
+  /**
+   * Updates state with the current domain and color
+   */
+  const updateStateWithDomain = (domain: string) => {
+    setState(prevState => ({
+      ...prevState,
+      domain,
+      color: generateColorFromDomain(domain)
+    }));
+  };
+
+  /**
+   * Updates state with saved domain information
+   */
+  const updateStateWithSavedInfo = (savedInfo: DomainInfo | null) => {
+    setState(prevState => ({
+      ...prevState,
+      savedInfo
+    }));
+  };
+
+  /**
+   * Executes a script to extract pubkey information from the page
+   */
+  const extractPubkeyFromPage = (
+    tabId: number, 
+    currentDomain: string, 
     previousInfo: DomainInfo | null,
     protocol: string
   ) => {
-    if (previousInfo === null) {
-      // First time seeing this domain with a valid pubkey
-      setState(prevState => ({
-        ...prevState,
-        isNewDomain: true
-      }));
-      saveDomainInfo(currentDomain, extractedPubkey, parsedRelays);
-    } else if (previousInfo.pubkey !== extractedPubkey) {
-      // We have a different pubkey than what we've seen before
-      setState(prevState => ({
-        ...prevState,
-        pubkeyMismatch: true
-      }));
+    chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const metaTag = document.querySelector('meta[name="nostr-pubkey"]');
+        if (!metaTag) return null;
+        
+        // Extract pubkey and relays
+        const pubkey = metaTag.getAttribute('content');
+        const relays = metaTag.getAttribute('relays') || metaTag.getAttribute('rel');
+        
+        return { pubkey, relays };
+      }
+    })
+    .then(async results => handleScriptResults(results, currentDomain, previousInfo, protocol))
+    .catch(error => handleScriptError(error, currentDomain, previousInfo, protocol));
+  };
+
+  /**
+   * Handles the results from the script execution
+   */
+  const handleScriptResults = async (
+    results: chrome.scripting.InjectionResult[], 
+    currentDomain: string, 
+    previousInfo: DomainInfo | null,
+    protocol: string
+  ) => {
+    // No results from script
+    if (!results || !results[0].result) {
+      return handleMissingPubkey(currentDomain, previousInfo, protocol);
+    }
+
+    const { pubkey: extractedPubkey, relays: extractedRelays } = results[0].result;
+    
+    // No pubkey in meta tag
+    if (!extractedPubkey) {
+      return handleMissingPubkey(currentDomain, previousInfo, protocol);
+    }
+
+    try {
+      // Parse and validate extracted pubkey and relays
+      const extractedPubkeyIsValid = isValidHexPubkey(extractedPubkey);
+      const extractedParsedRelays = parseRelays(extractedRelays);
+
+      // Process the extracted data based on whether we have previous info
+      if (previousInfo) {
+        handleExistingDomain(
+          currentDomain, 
+          extractedPubkey, 
+          extractedParsedRelays, 
+          previousInfo, 
+          extractedPubkeyIsValid, 
+          protocol
+        );
+      } else {
+        handleNewDomain(
+          currentDomain, 
+          extractedPubkey, 
+          extractedParsedRelays, 
+          extractedPubkeyIsValid, 
+          protocol
+        );
+      }
+    } catch (error) {
+      console.error('Error validating pubkey:', error);
+      handleValidationError(currentDomain, previousInfo, protocol);
+    }
+  };
+
+  /**
+   * Handles the case when no pubkey is found in the meta tag
+   */
+  const handleMissingPubkey = async (
+    currentDomain: string, 
+    previousInfo: DomainInfo | null,
+    protocol: string
+  ) => {
+    if (previousInfo) {
+      await fallbackToSavedPubkey(currentDomain, previousInfo, protocol);
     } else {
-      // Pubkey matches, always update relays (they don't have to match)
-      // Only show update notification if relays have actually changed
-      if (JSON.stringify(parsedRelays) !== JSON.stringify(previousInfo.relays)) {
-        saveDomainInfo(currentDomain, extractedPubkey, parsedRelays);
+      setState(prevState => ({
+        ...prevState,
+        pubkey: 'No Nostr pubkey found',
+        isValidPubkey: false
+      }));
+    }
+  };
+
+  /**
+   * Handles a domain we've seen before
+   */
+  const handleExistingDomain = async (
+    currentDomain: string,
+    extractedPubkey: string,
+    extractedParsedRelays: string[],
+    previousInfo: DomainInfo,
+    isValid: boolean,
+    protocol: string
+  ) => {
+    console.log('handleExistingDomain', {
+      currentDomain,
+      extractedPubkey,
+      previousPubkey: previousInfo.pubkey,
+      pubkeyMatch: previousInfo.pubkey === extractedPubkey,
+      isValid
+    });
+
+    // Check if the pubkey has changed
+    if (previousInfo.pubkey !== extractedPubkey) {
+      console.log('PUBKEY MISMATCH DETECTED', {
+        saved: previousInfo.pubkey,
+        extracted: extractedPubkey
+      });
+      
+      // Pubkey mismatch - prioritize previously saved pubkey
+      setState(prevState => ({
+        ...prevState,
+        pubkey: previousInfo.pubkey,
+        isValidPubkey: true,
+        relays: previousInfo.relays,
+        pubkeyMismatch: true,
+        extractedPubkey,
+        extractedRelays: extractedParsedRelays
+      }));
+      
+      // Check NIP-37 events with the saved pubkey
+      await checkNip37Events(
+        currentDomain,
+        previousInfo.pubkey,
+        previousInfo.relays,
+        protocol
+      );
+    } else {
+      console.log('Pubkeys match', extractedPubkey);
+      // Pubkeys match - update state and check if relays have changed
+      setState(prevState => ({
+        ...prevState,
+        pubkey: extractedPubkey,
+        isValidPubkey: isValid,
+        relays: extractedParsedRelays,
+        pubkeyMismatch: false // Explicitly set to false
+      }));
+      
+      // Update relays if they've changed
+      const relaysChanged = JSON.stringify(extractedParsedRelays) !== JSON.stringify(previousInfo.relays);
+      if (relaysChanged) {
+        console.log('Relays changed', {
+          old: previousInfo.relays,
+          new: extractedParsedRelays
+        });
+        
+        // Only save if domain is verified in NIP-37 event
+        const addressingEvent = await fetchLatestNip37Event(previousInfo.pubkey, previousInfo.relays);
+        if (addressingEvent) {
+          const clearnetTags = addressingEvent.tags.filter(tag => 
+            tag[0] === 'clearnet' && !!tag[1] && !!tag[2]
+          );
+          const domainFound = clearnetTags.some(tag => 
+            tag[1] === currentDomain && 
+            tag[2] === protocol
+          );
+          if (domainFound) {
+            console.log('Domain verified in NIP-37, updating relays');
+            saveDomainInfo(currentDomain, extractedPubkey, extractedParsedRelays);
+            setState(prevState => ({
+              ...prevState,
+              relaysUpdated: true
+            }));
+          }
+        }
+      }
+      
+      // Check NIP-37 events with saved pubkey
+      await checkNip37Events(
+        currentDomain,
+        previousInfo.pubkey,
+        previousInfo.relays,
+        protocol
+      );
+    }
+  };
+
+  /**
+   * Handles a new domain we haven't seen before
+   */
+  const handleNewDomain = async (
+    currentDomain: string,
+    extractedPubkey: string,
+    extractedParsedRelays: string[],
+    isValid: boolean,
+    protocol: string
+  ) => {
+    console.log('handleNewDomain', {
+      currentDomain,
+      extractedPubkey,
+      isValid
+    });
+    
+    // Check if we have any saved info for this domain
+    const savedInfo = getSavedInfoForDomain(currentDomain);
+    
+    if (savedInfo) {
+      console.log('Found saved info for domain', {
+        savedPubkey: savedInfo.pubkey,
+        extractedPubkey,
+        pubkeyMatch: savedInfo.pubkey === extractedPubkey
+      });
+      
+      const hasPubkeyMismatch = savedInfo.pubkey !== extractedPubkey;
+      
+      // If we have saved info, use that pubkey and relays
+      setState(prevState => ({
+        ...prevState,
+        pubkey: savedInfo.pubkey,
+        isValidPubkey: true,
+        relays: savedInfo.relays,
+        isNewDomain: true,
+        pubkeyMismatch: hasPubkeyMismatch,
+        extractedPubkey: hasPubkeyMismatch ? extractedPubkey : undefined,
+        extractedRelays: hasPubkeyMismatch ? extractedParsedRelays : undefined
+      }));
+      
+      // Check NIP-37 events with the saved pubkey
+      await checkNip37Events(
+        currentDomain,
+        savedInfo.pubkey,
+        savedInfo.relays,
+        protocol
+      );
+    } else {
+      // Check if this pubkey is already associated with other domains
+      const existingDomains = getDomainsForPubkey(extractedPubkey);
+      
+      if (existingDomains.length > 0) {
+        console.log('⚠️ POTENTIAL IMPERSONATION DETECTED!', {
+          extractedPubkey,
+          currentDomain,
+          existingDomains: existingDomains.map(d => d.domain)
+        });
+        
+        // This is an impersonation attempt - use the first existing domain's info
+        const firstDomain = existingDomains[0];
         setState(prevState => ({
           ...prevState,
-          relaysUpdated: true
+          pubkey: firstDomain.info.pubkey,
+          isValidPubkey: true,
+          relays: firstDomain.info.relays,
+          isNewDomain: true,
+          pubkeyMismatch: true, // This is key - mark as mismatch even though it's a "new" domain
+          extractedPubkey: extractedPubkey,
+          extractedRelays: extractedParsedRelays,
+          savedInfo: firstDomain.info // Include saved info so UI can show it
         }));
+        
+        // Check NIP-37 events with the known pubkey
+        await checkNip37Events(
+          currentDomain,
+          firstDomain.info.pubkey,
+          firstDomain.info.relays,
+          protocol
+        );
+      } else {
+        console.log('No saved info for domain or pubkey, using extracted pubkey');
+        // No saved info, use the extracted pubkey
+        setState(prevState => ({
+          ...prevState,
+          pubkey: extractedPubkey,
+          isValidPubkey: isValid,
+          relays: extractedParsedRelays,
+          isNewDomain: true,
+          pubkeyMismatch: false // Explicitly set to false for new domains
+        }));
+        
+        if (isValid) {
+          await checkNip37Events(
+            currentDomain,
+            extractedPubkey,
+            extractedParsedRelays,
+            protocol
+          );
+        }
       }
     }
+  };
+
+  /**
+   * Handles errors during pubkey validation
+   */
+  const handleValidationError = async (
+    currentDomain: string, 
+    previousInfo: DomainInfo | null,
+    protocol: string
+  ) => {
+    if (previousInfo) {
+      await fallbackToSavedPubkey(currentDomain, previousInfo, protocol);
+    } else {
+      setState(prevState => ({
+        ...prevState,
+        isValidPubkey: false
+      }));
+    }
+  };
+
+  /**
+   * Handles errors during script execution
+   */
+  const handleScriptError = (
+    error: any, 
+    currentDomain: string, 
+    previousInfo: DomainInfo | null,
+    protocol: string
+  ) => {
+    console.error('Error executing script:', error);
     
-    // Proceed with NIP-37 checks
-    const pubkeyToCheck = state.pubkeyMismatch ? previousInfo?.pubkey || extractedPubkey : extractedPubkey;
-    const relaysToUse = parsedRelays;
-    
-    await checkNip37Events(currentDomain, pubkeyToCheck, relaysToUse, protocol);
+    if (previousInfo) {
+      fallbackToSavedPubkey(currentDomain, previousInfo, protocol)
+        .catch(err => console.error('Error falling back to saved pubkey:', err));
+    } else {
+      setState(prevState => ({
+        ...prevState,
+        pubkey: 'Error accessing page content',
+        isValidPubkey: false
+      }));
+    }
   };
 
   /**
@@ -264,14 +498,82 @@ export function useNostrAddressing() {
       protocol: tag[2]
     }));
     
-    // Update state with domains and verification status
-    setState(prevState => ({
-      ...prevState,
-      nip37DomainMismatch: !domainFound,
-      nip37Domains: domains
-    }));
+    // Log verification status for debugging
+    console.log('Domain verification check:', {
+      currentDomain,
+      protocol,
+      pubkey: addressingEvent.pubkey,
+      domainFound,
+      clearnetTags,
+      domains
+    });
     
-    updateExtensionBadge(!domainFound, currentDomain);
+    // Get current state to properly update it
+    const currentState = await new Promise<NostrAddressingState>(resolve => {
+      setState(prevState => {
+        resolve(prevState);
+        return prevState;
+      });
+    });
+
+    console.log('Current state before update:', {
+      pubkeyMismatch: currentState.pubkeyMismatch,
+      nip37DomainMismatch: currentState.nip37DomainMismatch,
+      noNip37EventFound: currentState.noNip37EventFound
+    });
+    
+    // Update state with domains and verification status
+    setState(prevState => {
+      // Store existing pubkey mismatch status to preserve it
+      const hasPubkeyMismatch = prevState.pubkeyMismatch;
+      
+      // If domain is verified, save it to storage
+      if (domainFound && !hasPubkeyMismatch) {
+        const savedInfo = getSavedInfoForDomain(currentDomain);
+        if (!savedInfo) {
+          console.log('Saving verified domain info to storage');
+          // This is a new domain or pubkey, save it
+          saveDomainInfo(currentDomain, prevState.pubkey, prevState.relays);
+        }
+      }
+
+      console.log('Updating state with verification results', {
+        hasPubkeyMismatch,
+        domainFound,
+        nip37DomainMismatch: !domainFound
+      });
+      
+      return {
+        ...prevState,
+        nip37DomainMismatch: !domainFound,
+        noNip37EventFound: false,
+        nip37Domains: domains,
+        // Make sure we preserve pubkey mismatch warning
+        pubkeyMismatch: hasPubkeyMismatch
+      };
+    });
+    
+    // Log domain verification status for debugging
+    if (!domainFound) {
+      console.log(`Domain verification failed: ${currentDomain} not found in NIP-37 event for this pubkey`);
+    }
+    
+    // Get current state to check pubkey mismatch
+    const updatedState = await new Promise<NostrAddressingState>(resolve => {
+      setState(prevState => {
+        resolve(prevState);
+        return prevState;
+      });
+    });
+    
+    console.log('Updated state for badge:', {
+      pubkeyMismatch: updatedState.pubkeyMismatch,
+      nip37DomainMismatch: updatedState.nip37DomainMismatch,
+      showWarning: !domainFound || updatedState.pubkeyMismatch
+    });
+
+    // Update badge based on domain verification and pubkey mismatch
+    updateExtensionBadge(!domainFound || updatedState.pubkeyMismatch, currentDomain);
   };
 
   /**

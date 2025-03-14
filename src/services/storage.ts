@@ -47,4 +47,46 @@ export function getSavedInfoForDomain(domain: string): DomainInfo | null {
     console.error('Error getting saved info for domain:', error);
     return null;
   }
+}
+
+/**
+ * Checks if a pubkey is already saved for any domain
+ * @param pubkey The pubkey to check for
+ * @returns An array of domains associated with this pubkey, or empty array if none
+ */
+export function getDomainsForPubkey(pubkey: string): { domain: string; info: DomainInfo }[] {
+  try {
+    // Get existing saved pairs
+    const savedInfoJSON = localStorage.getItem(STORAGE_KEY) || '{}';
+    const savedInfo = JSON.parse(savedInfoJSON);
+    
+    // Find all domains that use this pubkey
+    const matches = Object.entries(savedInfo)
+      .filter(([_, info]: [string, any]) => info.pubkey === pubkey)
+      .map(([domain, info]: [string, any]) => ({ domain, info }));
+    
+    return matches;
+  } catch (error) {
+    console.error('Error checking for pubkey:', error);
+    return [];
+  }
+}
+
+/**
+ * Checks if a pubkey is already saved for any domain
+ * @param pubkey The pubkey to check for
+ * @returns Boolean indicating if the pubkey exists in saved data
+ */
+export function hasSavedPubkey(pubkey: string): boolean {
+  try {
+    // Get existing saved pairs
+    const savedInfoJSON = localStorage.getItem(STORAGE_KEY) || '{}';
+    const savedInfo = JSON.parse(savedInfoJSON);
+    
+    // Check if this pubkey exists in any saved domain info
+    return Object.values(savedInfo).some((info: any) => info.pubkey === pubkey);
+  } catch (error) {
+    console.error('Error checking for pubkey:', error);
+    return false;
+  }
 } 
